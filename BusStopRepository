@@ -1,0 +1,21 @@
+package com.example.demo.repository;
+
+import com.example.demo.entity.BusStop;          // 매핑할 Entity 클래스 import
+import org.springframework.data.jpa.repository.JpaRepository; // JPA 기본 CRUD 메서드 제공
+import org.springframework.data.jpa.repository.Query;         // 커스텀 JPQL 쿼리 작성 시 사용
+import org.springframework.stereotype.Repository;             // Data Access Layer 컴포넌트 선언
+import java.util.List;                                        // 여러 건의 데이터를 List로 반환하기 위해 import
+
+@Repository // Spring이 이 인터페이스를 Data Access Layer 컴포넌트로 인식
+public interface BusStopRepository extends JpaRepository<BusStop, Long> {
+    // JpaRepository<엔티티 타입, PK 타입> 상속 → 기본 CRUD 메서드 자동 제공
+
+    // 승차 정류장 표준코드가 null인 데이터 조회
+    List<BusStop> findBy승차정류장표준코드IsNull();
+
+    // ARS 코드로 정류장 조회
+    List<BusStop> findBy승차정류장ARS(String ars);
+
+    // 노선명으로 조회
+    List<BusStop> findBy노선명(String 노선명);
+}
