@@ -3,7 +3,7 @@
 > 서울 버스 승하차(OD) 데이터를 활용한 정류장별 혼잡도 계산 및 인터랙티브 시각화 프로젝트
 > 궁극적 목표: OD 분석 → **트립체인(Trip Chain) 분석 및 가공**으로 확장하여 이용자의 이동 패턴을 파악하고 이동 효율화의 데이터 근거 마련
 
-[![GitHub Pages](https://img.shields.io/badge/Live-Demo-brightgreen)](https://lanx2933.github.io/Transit-Data_Seoul/03_visualization/congestion_map.html)
+[![GitHub Pages](https://img.shields.io/badge/Live-Demo-brightgreen)](https://ianx2933.github.io/Transit-Data_Seoul/03_visualization/congestion_map.html)
 
 ---
 
