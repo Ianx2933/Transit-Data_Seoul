@@ -11,9 +11,9 @@
 
 서울시 버스 OD 원시 데이터를 전처리하고, 정류장 단위 재차량 및 혼잡도를 계산하여 인터랙티브 지도로 시각화하는 엔드 투 엔드 데이터 파이프라인을 구축했습니다.
 
-- **데이터**: 서울시 버스 OD 데이터 (약 52만건 → 494,728건)
+- **데이터**: 서울시 버스 OD 데이터 (약 200만건)
 - **분석 노선**: 143, 302, 303, 333, 343, 345, 422, 440, 4318, 9401, 9404, 9408 등
-- **분석 기간**: 2025년 10월 14일 기준 (CSV 교체로 날짜 변경 가능)
+- **분석 기간**: 20231017, 20241019, 20251014 (날짜별 시계열 비교)
 - **최종 목표**: 버스 OD 분석 → 트립체인 분석 → 이동 패턴 기반 서비스 개인화
 ---
 ## 트립체인 분석으로의 확장
@@ -39,14 +39,14 @@
 | 구분 | 기술 |
 |------|------|
 | 언어 | Java 21, Python 3.14, SQL |
-| 프레임워크 | Spring Boot 4.0.4, JPA/Hibernate 7 |
-| DB | SQL Server Express |
+| 프레임워크 | Spring Boot 4.0.4, JPA/Hibernate 7, SQL Server |
+| DB | SQL Server |
 | ORM | JdbcTemplate (CTE + 윈도우 함수) |
 | 시각화 | Python Folium |
 | 데이터 처리 | Pandas |
 | 배포 | GitHub Pages |
 | 버전관리 | Git / GitHub |
-| 개발도구 | VS Code, SSMS, Maven |
+| 개발도구 | VS Code, SSMS, Maven, IntelliJ |
 
 ---
 
@@ -69,13 +69,68 @@ Spring Boot REST API
 - 19시간(서울 내 버스가 운행하는 평균적인 시간대) 기준 시간당 평균 보정
 - 혼잡도 등급 산정 (5단계)
 - 위경도 조인 (ARS + 정류장명 복합)
+- 출발-도착 구간 혼잡도 조회 API
         ↓
 Python Folium 시각화
+- 날짜별 레이어 (2023 / 2024 / 2025 시계열 비교)
 - 3개 레이어 (노선별 / 통합 / 밀집도)
 - OD 팝업 (승차목적지 / 하차출발지)
 - CSV 캐싱으로 성능 최적화
         ↓
 GitHub Pages 배포
+인터랙티브 혼잡도 지도
+```
+## 재차량 계산 알고리즘
+재차량은 버스 내 실제 탑승 인원을 의미하며, 다음 누적 공식으로 계산합니다.
+재차량(n번 정류장) = 재차량(n-1번) + 승차(n번) - 하차(n번)
+이 계산은 노선 전체 순번이 정확해야 하므로, 데이터 품질 관리 문제가 전부 해결된 이후에 구현 가능합니다. 전처리 파이프라인이 이 계산의 정확성을 보장합니다.
+SQL 구현 (CTE + 윈도우 함수)
+
+```sql
+WITH 순승객 AS (
+    -- 승차: 양수로 합산
+    SELECT 노선명, CAST(승차_정류장순번 AS INT) AS 순번,
+        승차_정류장ARS AS ARS, 승차_정류장명 AS 정류장명,
+        SUM(승객수) AS 순승객수
+    FROM Analysis_Table_Final
+    WHERE 노선명 = ? AND 기준일자 = ?
+    AND 승차_정류장ARS != '00000'
+    GROUP BY 노선명, 승차_정류장순번, 승차_정류장ARS, 승차_정류장명
+
+    UNION ALL
+
+    -- 하차: 음수로 합산
+    SELECT 노선명, CAST(하차_정류장순번 AS INT) AS 순번,
+        하차_정류장ARS AS ARS, 하차_정류장명 AS 정류장명,
+        -SUM(승객수) AS 순승객수
+    FROM Analysis_Table_Final
+    WHERE 노선명 = ? AND 기준일자 = ?
+    AND 하차_정류장ARS != '00000'
+    GROUP BY 노선명, 하차_정류장순번, 하차_정류장ARS, 하차_정류장명
+),
+정류장별합산 AS (
+    SELECT 노선명, 순번, ARS, 정류장명,
+        SUM(순승객수) AS 정류장순승객   -- 승차 - 하차 = 순승객
+    FROM 순승객
+    GROUP BY 노선명, 순번, ARS, 정류장명
+),
+재차량계산 AS (
+    SELECT 노선명, 순번, ARS, 정류장명,
+        SUM(정류장순승객) OVER (         -- 윈도우 함수로 누적 합산
+            PARTITION BY 노선명
+            ORDER BY 순번
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS 재차량
+    FROM 정류장별합산
+)
+SELECT 노선명, 순번, ARS, 정류장명,
+    -- 음수 보정 + 19시간 평균
+    CASE WHEN 재차량 < 0 THEN 0
+         ELSE ROUND(재차량 / 19.0, 0) END AS 재차량,
+    -- 혼잡도 (노선 내 최대 재차량 대비 %)
+    ROUND(재차량 * 100.0 / NULLIF(MAX(재차량) OVER (PARTITION BY 노선명), 0), 1) AS 상대혼잡도
+FROM 재차량계산
+ORDER BY 순번
 ```
 
 ---
