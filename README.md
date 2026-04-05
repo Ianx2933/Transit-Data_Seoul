@@ -82,8 +82,8 @@ GitHub Pages 배포
 ```
 ## 재차량 계산 알고리즘
 재차량은 버스 내 실제 탑승 인원을 의미하며, 다음 누적 공식으로 계산합니다.
-재차량(n번 정류장) = 재차량(n-1번) + 승차(n번) - 하차(n번)
-이 계산은 노선 전체 순번이 정확해야 하므로, 데이터 품질 관리 문제가 전부 해결된 이후에 구현 가능합니다. 전처리 파이프라인이 이 계산의 정확성을 보장합니다.
+## 재차량(n번 정류장) = 재차량(n-1번) + 승차(n번) - 하차(n번)
+이 계산은 노선 전체 순번이 정확해야 하므로, 데이터 품질 관리 문제가 전부 해결된 이후에 구현 가능하며, 전처리 파이프라인이 이 계산의 정확성을 보장합니다.
 SQL 구현 (CTE + 윈도우 함수)
 
 ```sql
@@ -132,6 +132,74 @@ SELECT 노선명, 순번, ARS, 정류장명,
 FROM 재차량계산
 ORDER BY 순번
 ```
+---
+## 전처리 파이프라인 상세
+전처리는 Spring Boot REST API로 구현되어 날짜별로 실행 가능합니다.
+
+### 전처리 그룹 구성
+API 그룹내용
+그룹 1:가상 정류장 처리 (ARS=00000 통합, 정류장 순번 부여)POST /api/busstop/fix-virtual-stop
+그룹 2: 순번/ARS 불일치 보정POST /api/busstop/fix-sequence
+그룹 3: 승차=하차 동일 보정POST /api/busstop/fix-same-stop-od
+그룹 4: 표준코드 NULL 보정(20251014 데이터와 조인, 폐선 노선 처리) POST /api/busstop/fix-null
+그룹 5: 중복 합산 처리 (deduplicateAndSum)POST /api/busstop/deduplicate
+
+##표준코드 NULL 처리 전략
+1단계: 2025 데이터 조인으로 대량 채우기 (현재 운행 노선 대부분 해결)
+    UPDATE a SET a.승차_정류장표준코드 = b.승차_정류장표준코드
+    FROM Analysis_Table_Final a
+    INNER JOIN Analysis_Table_Final b ON a.승차_정류장ARS = b.승차_정류장ARS
+    WHERE a.기준일자 = '2023XXXX' AND b.기준일자 LIKE '2025%'
+
+2단계: 잔여 NULL → 폐선 노선으로 추정, API 호출 생략
+    [정보] 승차 표준코드 잔여 NULL: 6019건 → 폐선 노선으로 추정, API 호출 생략
+폐선 노선은 국토부 표준코드 자체가 존재하지 않으므로 분석 시 제외 처리합니다.
+
+***현재 csv 파일의 전처리는 전체 완료 상태
+---
+
+## API 엔드포인트 (Swagger UI)
+Swagger UI: http://localhost:8080/swagger-ui/index.html
+
+### 혼잡도 API
+메서드 엔드 포인트 설명: GET/api/congestion/{노선명}?date=20231017
+단일 노선 혼잡도: GET/api/congestion?routes={노선명,노선명}&date=20231017
+복수 노선 혼잡도: GET/api/congestion/stops?route={노선명}&date=20231017
+정류장 목록: GET/api/congestion/section?route={노선명}&from={출발지_정류장}&to={도착지_정류장}&date=20231017출발-도착 구간 혼잡도
+
+### OD API
+메서드 엔드 포인트 설명: GET/api/od/{노선명}/{ARS}?date=20231017
+정류장별 OD 예시: GET/api/od/all?date=20231017전체 노선 OD
+구간 혼잡도 조회 예시
+jsonGET /api/congestion/section?route=6713&from=국회의사당역5번출구&to=샛강역4번출구.여의도자이&date=20251014
+
+[
+  {
+    "노선명": "6713",
+    "순번": 46,
+    "정류장명": "국회의사당역5번출구",
+    "재차량": 73,
+    "상대혼잡도": 67.6,
+    "혼잡도등급": "혼잡"
+  },
+  {
+    "노선명": "6713",
+    "순번": 47,
+    "정류장명": "여의도역6번출구",
+    "재차량": 93,
+    "상대혼잡도": 86.1,
+    "혼잡도등급": "매우혼잡"
+  },
+  {
+    "노선명": "6713",
+    "순번": 48,
+    "정류장명": "샛강역4번출구.여의도자이",
+    "재차량": 100,
+    "상대혼잡도": 92.6,
+    "혼잡도등급": "매우혼잡"
+  }
+]
+재차량이 73 → 93 → 100으로 증가하는 패턴이 구간별 혼잡도 심화를 정확하게 반영합니다.
 
 ---
 
@@ -150,6 +218,18 @@ ORDER BY 순번
 - 어디서 타고 → 여기서 내리는지 (노선 순번 순)
 
 ---
+## 레이어 구성
+날짜별 레이어를 LayerControl로 분리하여 연도별 혼잡도 변화를 직관적으로 비교할 수 있습니다.
+☑ 2023-10-17 | 영등포10번 - 노선별 혼잡도
+☐ 2024-10-19 | 영등포10번 - 노선별 혼잡도
+☐ 2025-10-14 | 영등포10번 - 노선별 혼잡도
+☐ 2023-10-17 | 전체 통합 기준 혼잡도
+...
+
+### 날짜 추가 방법:
+```python
+날짜목록 = ['20231017', '20241019', '20251014']  # 여기만 수정
+```
 
 ## 시각화 결과물 (예시)
 
@@ -408,52 +488,94 @@ str(x).zfill(5)  # '7511' → '07511'
 
 ---
 
-### 6. SQL 단독 처리 → Python 자동화: 약 30분 → 10-15초
+### 6. N+1 문제 해결: 표준코드 보정 대폭 성능 개선
 
-**문제**: SQL만으로 3단계 보정 작업 수동 처리 → 매번 20-30분 소요
+**기존 구조 (N+1)**: NULL 목록 조회 → 건당 API 호출 → 건당 UPDATE → 수천 건 × 2 IO = 수천 번 DB 접근
 
-**해결**: Spring Boot REST API + Python 자동화 파이프라인 구축 ✅
-- 실행 시간 **약 30분 → 13초로 단축 (약 120배 향상)**
+**개선 구조**: 
+ 1단계: 2025 데이터와 조인으로 대부분의 데이터 UPDATE (574,624건 처리)
+ 2단계: 잔여 NULL 데이터만 ARS별로 묶어서 API 호출
 
 ---
 
-### 7. SQL Server Express 메모리 부족
+### 7. SQL Server Express 메모리 부족 → DB 손상 및 복구
 
 **문제**: 복잡한 CTE + 윈도우 함수 실행 시 `SQL Error 802` 발생
 
-**해결**: 쿼리 실행 전 캐시 초기화 ✅
+**원인**: SQL Server 최대 메모리 무제한(2147483647MB) 설정으로 8GB RAM 전부 소진
+
+**해결**: SQL Server 메모리 4GB로 제한
+
+---
+
+### 8. 세션 교착 상태 (Deadlock) 진단 및 해결
 ```SQL
-DBCC FREEPROCCACHE;
-DBCC DROPCLEANBUFFERS;
+-- 실행 중인 세션 확인
+SELECT r.session_id, r.status, r.command,
+       t.text AS query_text,
+       r.total_elapsed_time / 1000 AS elapsed_seconds
+FROM sys.dm_exec_requests r
+CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
+WHERE r.session_id > 50;
+
+-- 중복 세션 강제 종료
+KILL 54;
+KILL 55;
 ```
 
 ---
 
-### 8. LIKE 앞 와일드카드 쿼리 속도 저하
+### 9. 컬럼 타입 최적화 (VARCHAR → INT)
 
-**문제**: `LIKE '%가상%'` 사용 시 Full Table Scan 발생
+**문제**: 기존에 설정된 컬럼 타입 중 숫자 데이터임에도 VARCHAR로 선언된 컬럼들이 쿼리 전반에 CAST를 유발하여 인덱스 무력화 및 병목 발생.
 
-**해결**: 자주 검색하는 컬럼에 인덱스 추가 ✅
-```SQL
-CREATE INDEX IX_Analysis_승차정류장명
-ON Seoul_Transit.dbo.Analysis_Table_Final (승차_정류장명);
+**해결**: 
+```sql
+ALTER TABLE Analysis_Table_Final ALTER COLUMN 승차_정류장순번 INT;
+ALTER TABLE Analysis_Table_Final ALTER COLUMN 하차_정류장순번 INT;
+ALTER TABLE Analysis_Table_Final ALTER COLUMN 승객수 INT;
+ALTER TABLE Analysis_Table_Final ALTER COLUMN 전환_노선ID BIGINT;
 ```
+---
+
+### 11. LIKE 앞 와일드카드 쿼리 속도 저하
+```sql
+CREATE INDEX IX_승차정류장명 ON Analysis_Table_Final(승차_정류장명);
+CREATE INDEX IX_하차정류장명 ON Analysis_Table_Final(하차_정류장명);
+```
+---
+### 12. Hibernate 7.x 호환성 문제
+
+Spring Boot 4.0.4 + Hibernate 7.x 업그레이드 후 JPQL 오류 → JdbcTemplate으로 전환하여 Native SQL 직접 실행.
 
 ---
 
-### 9. Hibernate 7.x 호환성 문제
+## 한계점 및 향후 계획
 
-**문제**: Spring Boot 4.0.4 + Hibernate 7.x 업그레이드 후 JPQL 오류
+### 한계점
+- 정류장명 불일치로 인한 약 1.5% 좌표 미매칭 (데이터 품질 한계)
+- deduplicateAndSum이 대용량 처리로 Spring API 타임아웃 발생 → SSMS 직접 실행으로 우회 (Airflow DAG으로 이관 예정)
 
-**해결**: JdbcTemplate으로 전환하여 Native SQL 직접 실행 ✅
+## 기술적 향후 계획
+### 성능 고도화
+- `@Async` + `CompletableFuture`: 공공 API 21건 순차 → 병렬 처리 전환
+- `Redis` 캐싱: 노선별 혼잡도 TTL 24시간, 정류장 표준코드 TTL 7일
+- `@Scheduled`: 새 날짜 데이터 적재 후 보정까지 완전 자동화
+- PostgreSQL 마이그레이션 (Airflow/Spark 연동 최적화)
 
----
+### 파이프라인 고도화
+- Airflow DAG으로 전처리 자동화 (deduplicateAndSum 포함)
+- Kafka 기반 일별 승하차 데이터 실시간 수집
+- Spark 기반 대용량 처리 (데이터 안심구역 2TB OD 데이터 처리)
 
-### 10. 단일 날짜 데이터 한계
+### 분석 고도화
+- 시간대별/요일별 데이터 수집 → 혼잡도 예측 모델 (XGBoost/LSTM)
+- 트립체인 분석 모델 도입
+- 데이터 안심구역 연계: 환승 패턴, 이용자 유형별 트립체인 심층 분석
 
-**문제**: 초기에 단일 날짜 CSV만 보유 → 시간대별/요일별 분석 불가
-
-**해결**: CSV 교체만으로 즉시 다른 날짜 분석 가능한 구조로 설계
+### 서비스 고도화
+- 출발/도착 정류장 입력 시 구간 이용객 수, 재차량, 혼잡도를 즉시 조회하는 웹 서비스 구현 (Swagger → HTML5 프론트 전환 예정)
+- 일별 승하차 공공 API 연동으로 패턴 기반 혼잡도 예측 서비스 구현
 
 ---
 
@@ -486,7 +608,6 @@ Transit-Data_Seoul/
         ├── 위례_전체.png
         └── 위례_정류장_혼잡도.png
 ```
-
 ---
 
 ## 실행 방법
@@ -496,37 +617,15 @@ Transit-Data_Seoul/
 cd demo
 mvn spring-boot:run
 ```
+### Swagger UI 접속
+http://localhost:8080/swagger-ui/index.html
 
 ### Folium 지도 생성
 ```bash
 # make_map.py 상단 설정
 노선목록 = '143,345,4318'   # 분석할 노선 (쉼표로 구분, 서울특별시 시내버스 내에서 변경 가능)
+날짜목록 = ['20231017', '20241019', '20251014']    # 비교할 날짜
 강제갱신 = False             # True: API 재호출, False: 캐시 사용
 
 python C:/data/make_map.py
 ```
-
----
-
-## 한계점 및 향후 계획
-
-### 한계점
-- 단일 날짜 데이터 기반 (CSV 파일 교체로 해결 가능)
-- 정류장명 불일치로 인한 약 1.5% 좌표 미매칭 (데이터 품질 한계)
-
-## 기술적 향후 계획
-### 성능 고도화
-- `@Async` + `CompletableFuture`: 공공 API 21건 순차 → 병렬 처리 전환
-- `Redis` 캐싱: 노선별 혼잡도 TTL 24시간, 정류장 표준코드 TTL 7일
-- `@Scheduled`: 새 날짜 데이터 적재 후 보정까지 완전 자동화
-
-### 분석 고도화
-- 시간대별/요일별 데이터 수집 → 혼잡도 예측 모델 (XGBoost/LSTM)
-- 노선 재설계 최적화 모델 (OR-Tools)
-- Kafka 기반 실시간 혼잡도 모니터링
-- 트립체인 분석 모델 도입
-
-### 서비스 고도화
-- 출발/도착 정류장 입력 시 구간 이용객 수, 재차량, 혼잡도를 즉시 조회하는 웹 서비스 구현
-- HTML5 프론트엔드 + Spring Boot REST API + DB 조회 풀스택 파이프라인
-- 데이터안심구역 연계: 환승 패턴, 이용자 유형별 트립체인 심층 분석
