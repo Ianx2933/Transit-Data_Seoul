@@ -1,0 +1,85 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: seouldb
+    environment:
+      POSTGRES_DB: Seoul_Transit
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 330218
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  springboot:
+    build: .
+    container_name: seoulapi
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://seouldb:5432/Seoul_Transit
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: 330218
+    depends_on:
+      - postgres
+
+  airflow-db:
+    image: postgres:15
+    container_name: airflowdb
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - airflow_db_data:/var/lib/postgresql/data
+
+  airflow-init:
+    image: apache/airflow:2.9.0
+    container_name: airflowinit
+    depends_on:
+      - airflow-db
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__WEBSERVER__SECRET_KEY: 'seoul_transit_secret'
+    command: bash -c "airflow db migrate && airflow users create --username admin --password admin --firstname admin --lastname admin --role Admin --email admin@example.com"
+
+  airflow-webserver:
+    image: apache/airflow:2.9.0
+    container_name: airflowwebserver
+    depends_on:
+      - airflow-db
+      - airflow-init
+    ports:
+      - "8081:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__WEBSERVER__SECRET_KEY: 'seoul_transit_secret'
+    volumes:
+      - ./dags:/opt/airflow/dags
+    command: webserver
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.0
+    container_name: airflowscheduler
+    depends_on:
+      - airflow-db
+      - airflow-init
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__WEBSERVER__SECRET_KEY: 'seoul_transit_secret'
+    volumes:
+      - ./dags:/opt/airflow/dags
+    command: scheduler
+
+volumes:
+  postgres_data:
+  airflow_db_data:
