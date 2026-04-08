@@ -2,6 +2,7 @@ package com.example.demo.service;
 
 import com.example.demo.dto.CongestionDto;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -26,10 +27,12 @@ public class CongestionService {
      * 재차량은 19시간(04~23시) 기준 시간당 평균으로 보정
      * 총승객수는 승차 + 하차 합산
      * PostgreSQL: ISNULL → COALESCE, master.dbo → public 스키마로 변경
+     * @Cacheable: 동일 노선+날짜 조합은 Redis에서 반환 (TTL 24시간)
      * @param routeName 조회할 노선 번호 (예: "422")
      * @param date      조회할 날짜 (예: "20231017")
      * @return 정류장별 혼잡도 + 위경도 + 총승객수 정보 목록
      */
+    @Cacheable(value = "congestion", key = "#routeName + '_' + #date")
     public List<CongestionDto> getCongestionByRoute(String routeName, String date) {
 
         String sql =
@@ -165,10 +168,12 @@ public class CongestionService {
     /**
      * 특정 노선의 정류장명 목록 조회 (자동완성용)
      * 순번 순서대로 반환하여 노선 흐름대로 표시
+     * @Cacheable: 동일 노선+날짜 조합은 Redis에서 반환 (TTL 24시간)
      * @param routeName 조회할 노선 번호
      * @param date      조회할 날짜
      * @return 정류장명 목록 (순번 순)
      */
+    @Cacheable(value = "stops", key = "#routeName + '_' + #date")
     public List<String> getStopsByRoute(String routeName, String date) {
         String sql =
             "SELECT 승차_정류장명 " +
@@ -185,6 +190,7 @@ public class CongestionService {
     /**
      * 출발-도착 구간 혼잡도 조회
      * 기존 getCongestionByRoute 결과에서 구간만 필터링
+     * getCongestionByRoute가 @Cacheable이므로 구간 조회도 캐시 혜택을 받음
      * @param routeName 노선명
      * @param from      출발 정류장명
      * @param to        도착 정류장명
@@ -194,7 +200,7 @@ public class CongestionService {
     public List<CongestionDto> getSectionCongestion(
             String routeName, String from, String to, String date) {
 
-        // 전체 노선 데이터 가져오기 (기존 로직 재사용)
+        // 전체 노선 데이터 가져오기 (기존 로직 재사용, 캐시 적용됨)
         List<CongestionDto> allStops = getCongestionByRoute(routeName, date);
 
         // 출발-도착 구간 필터링

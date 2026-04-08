@@ -3,6 +3,7 @@ package com.example.demo.service;
 import com.example.demo.entity.BusStop;
 import com.example.demo.repository.BusStopRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -59,9 +60,11 @@ public class BusStopService {
      * ARS 코드(5자리)로 공공 API를 호출해서 정류장 표준코드(9자리) 조회
      * 날짜와 무관하게 ARS 코드만으로 조회하므로 기준일자 파라미터 없음
      * 429 Rate limit 또는 기타 API 오류 시 null 반환하고 계속 진행
+     * @Cacheable: 동일 ARS 코드는 Redis에서 반환 (TTL 7일) → 외부 API 호출 횟수 대폭 절감
      * @param arsCode 조회할 정류장 ARS 코드 (5자리)
      * @return 정류장 표준코드 (9자리), 결과 없거나 오류 시 null 반환
      */
+    @Cacheable(value = "arsStandardCode", key = "#arsCode")
     public String getStandardCodeByArs(String arsCode) {
         try {
             String url = API_URL + "?apikey=" + API_KEY + "&stId=" + arsCode; // API 호출 URL 조합
@@ -581,7 +584,7 @@ public class BusStopService {
             "FROM analysis_table_final b " +
             "WHERE a.노선명 = b.노선명 " +
             "AND a.기준일자 = b.기준일자 " +
-            "AND b.승차_정류장순번 = a.승차_정류장순번 + 1 " +       // INTEGER 타입이므로 CAST 불필요
+            "AND b.승차_정류장순번 = a.승차_정류장순번 + 1 " +
             "AND a.승차_정류장ars = a.하차_정류장ars " +
             "AND a.기준일자 = ?",
             기준일자
