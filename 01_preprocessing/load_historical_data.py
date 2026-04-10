@@ -6,7 +6,7 @@ import time
 # ============================================================
 # 설정
 # ============================================================
-DAILY_API_KEY = "4f514c576773746134316f7643526a"
+DAILY_API_KEY  = "4f514c576773746134316f7643526a"
 HOURLY_API_KEY = "47764c6d7273746134356745597371"
 
 DB_CONN = {
@@ -17,9 +17,8 @@ DB_CONN = {
     "password": "330218"
 }
 
-# 수집 기간 설정
 START_DATE = datetime(2023, 1, 1)
-END_DATE = datetime.today()
+END_DATE   = datetime.today()
 
 # ============================================================
 # 일별 승하차 과거 데이터 적재
@@ -33,7 +32,7 @@ def load_daily_historical():
         target_date = current.strftime("%Y%m%d")
 
         try:
-            url = f"http://openapi.seoul.go.kr:8088/{DAILY_API_KEY}/json/CardBusStatisticsServiceNew/1/1000/{target_date}"
+            url = f"http://openapi.seoul.go.kr:8088/4f514c576773746134316f7643526a/json/CardBusStatisticsServiceNew/1/1000/{target_date}"
             response = requests.get(url, timeout=30)
             data = response.json()
 
@@ -53,14 +52,14 @@ def load_daily_historical():
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT DO NOTHING
                 """, (
-                    row.get("USE_DT"),
-                    row.get("LINE_NUM"),
-                    row.get("LINE_NM"),
-                    row.get("STND_BSST_ID"),
-                    row.get("BSST_ARS_NO"),
-                    row.get("STATION_NM"),
-                    int(row.get("RIDE_PASGR_NUM", 0)),
-                    int(row.get("ALIGHT_PASGR_NUM", 0))
+                    row.get("USE_YMD"),
+                    row.get("RTE_NO"),
+                    row.get("RTE_NM"),
+                    row.get("STOPS_ID"),
+                    row.get("STOPS_ARS_NO"),
+                    row.get("SBWY_STNS_NM"),
+                    int(row.get("GTON_TNOPE", 0)),
+                    int(row.get("GTOFF_TNOPE", 0))
                 ))
 
             conn.commit()
@@ -85,48 +84,50 @@ def load_hourly_historical():
     conn = psycopg2.connect(**DB_CONN)
     cursor = conn.cursor()
 
-    # 월별로 수집
     current = START_DATE.replace(day=1)
     while current <= END_DATE:
         target_ym = current.strftime("%Y%m")
 
         try:
-            url = f"http://openapi.seoul.go.kr:8088/{HOURLY_API_KEY}/json/CardBusTimeStatisticsServiceNew/1/1000/{target_ym}"
+            url = f"http://openapi.seoul.go.kr:8088/47764c6d7273746134356745597371/json/CardBusTimeNew/1/1000/{target_ym}"
             response = requests.get(url, timeout=30)
             data = response.json()
 
-            if "CardBusTimeStatisticsServiceNew" not in data:
+            if "CardBusTimeNew" not in data:
                 print(f"[경고] 데이터 없음: {target_ym}")
-                # 다음 달로 이동
-                if current.month == 12:
-                    current = current.replace(year=current.year + 1, month=1)
-                else:
-                    current = current.replace(month=current.month + 1)
-                continue
+            else:
+                rows = data["CardBusTimeNew"]["row"]
 
-            rows = data["CardBusTimeStatisticsServiceNew"]["row"]
+                for row in rows:
+                    for hour in range(24):
+                        on_key  = f"HR_{hour}_GET_ON_TNOPE"
+                        off_key = f"HR_{hour}_GET_OFF_TNOPE"
 
-            for row in rows:
-                cursor.execute("""
-                    INSERT INTO hourly_od_data (
-                        기준년월, 노선번호, 노선명,
-                        버스정류장ARS번호, 역명,
-                        시간대, 승차인원, 하차인원
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT DO NOTHING
-                """, (
-                    row.get("USE_MON"),
-                    row.get("LINE_NUM"),
-                    row.get("LINE_NM"),
-                    row.get("BSST_ARS_NO"),
-                    row.get("STATION_NM"),
-                    int(row.get("HHMM", 0)),
-                    int(row.get("RIDE_PASGR_NUM", 0)),
-                    int(row.get("ALIGHT_PASGR_NUM", 0))
-                ))
+                        # 1시 하차는 필드명 오타
+                        if hour == 1:
+                            off_key = "HR_1_GET_OFF_NOPE"
 
-            conn.commit()
-            print(f"[정보] 시간대별 적재 완료: {target_ym} ({len(rows)}건)")
+                        cursor.execute("""
+                            INSERT INTO hourly_od_data (
+                                기준년월, 노선번호, 노선명,
+                                표준버스정류장ID, 버스정류장ARS번호, 역명,
+                                시간대, 승차인원, 하차인원
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, (
+                            row.get("USE_YM"),
+                            row.get("RTE_NO"),
+                            row.get("RTE_NM"),
+                            row.get("STOPS_ID"),
+                            row.get("STOPS_ARS_NO"),
+                            row.get("SBWY_STNS_NM"),
+                            hour,
+                            int(row.get(on_key, 0) or 0),
+                            int(row.get(off_key, 0) or 0)
+                        ))
+
+                conn.commit()
+                print(f"[정보] 시간대별 적재 완료: {target_ym} ({len(rows)}건)")
 
         except Exception as e:
             print(f"[오류] {target_ym} 실패: {e}")

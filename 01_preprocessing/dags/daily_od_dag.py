@@ -27,7 +27,7 @@ def collect_daily_od(**context):
     target_date = (context["execution_date"].in_timezone(KST) - timedelta(days=1)).strftime("%Y%m%d")
     print(f"[정보] 수집 대상 날짜: {target_date}")
 
-    url = f"http://openapi.seoul.go.kr:8088/{API_KEY}/json/CardBusStatisticsServiceNew/1/1000/{target_date}"
+    url = f"http://openapi.seoul.go.kr:8088/4f514c576773746134316f7643526a/json/CardBusStatisticsServiceNew/1/1000/{target_date}"
 
     response = requests.get(url, timeout=30)
     data = response.json()
@@ -53,14 +53,14 @@ def collect_daily_od(**context):
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT DO NOTHING
         """, (
-            row.get("USE_DT"),
-            row.get("LINE_NUM"),
-            row.get("LINE_NM"),
-            row.get("STND_BSST_ID"),
-            row.get("BSST_ARS_NO"),
-            row.get("STATION_NM"),
-            int(row.get("RIDE_PASGR_NUM", 0)),
-            int(row.get("ALIGHT_PASGR_NUM", 0))
+            row.get("USE_YMD"),
+            row.get("RTE_NO"),
+            row.get("RTE_NM"),
+            row.get("STOPS_ID"),
+            row.get("STOPS_ARS_NO"),
+            row.get("SBWY_STNS_NM"),
+            int(row.get("GTON_TNOPE", 0)),
+            int(row.get("GTOFF_TNOPE", 0))
         ))
 
     conn.commit()

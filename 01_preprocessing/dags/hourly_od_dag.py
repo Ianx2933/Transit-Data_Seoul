@@ -21,6 +21,8 @@ KST = pendulum.timezone("Asia/Seoul")
 
 # ============================================================
 # 시간대별 승하차 데이터 수집 및 적재
+# API 구조: 한 row에 0~23시 전부 컬럼으로 존재
+# → DB에는 시간대별로 분리해서 저장 (pivot)
 # ============================================================
 def collect_hourly_od(**context):
     # 전월 년월 계산
@@ -30,46 +32,55 @@ def collect_hourly_od(**context):
     target_ym = last_month.strftime("%Y%m")
     print(f"[정보] 수집 대상 년월: {target_ym}")
 
-    url = f"http://openapi.seoul.go.kr:8088/{API_KEY}/json/CardBusTimeStatisticsServiceNew/1/1000/{target_ym}"
+    url = f"http://openapi.seoul.go.kr:8088/47764c6d7273746134356745597371/json/CardBusTimeNew/1/1000/{target_ym}"
 
     response = requests.get(url, timeout=30)
     data = response.json()
 
     # API 응답 확인
-    if "CardBusTimeStatisticsServiceNew" not in data:
+    if "CardBusTimeNew" not in data:
         print(f"[경고] API 응답 없음: {data}")
         return
 
-    rows = data["CardBusTimeStatisticsServiceNew"]["row"]
+    rows = data["CardBusTimeNew"]["row"]
     print(f"[정보] 수집된 행 수: {len(rows)}")
 
-    # DB 적재
+    # DB 적재 (wide → long 변환)
     conn = psycopg2.connect(**DB_CONN)
     cursor = conn.cursor()
 
     for row in rows:
-        cursor.execute("""
-            INSERT INTO hourly_od_data (
-                기준년월, 노선번호, 노선명,
-                버스정류장ARS번호, 역명,
-                시간대, 승차인원, 하차인원
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT DO NOTHING
-        """, (
-            row.get("USE_MON"),
-            row.get("LINE_NUM"),
-            row.get("LINE_NM"),
-            row.get("BSST_ARS_NO"),
-            row.get("STATION_NM"),
-            int(row.get("HHMM", 0)),
-            int(row.get("RIDE_PASGR_NUM", 0)),
-            int(row.get("ALIGHT_PASGR_NUM", 0))
-        ))
+        for hour in range(24):
+            on_key  = f"HR_{hour}_GET_ON_TNOPE"
+            off_key = f"HR_{hour}_GET_OFF_TNOPE"
+
+            # 1시 하차는 필드명이 HR_1_GET_OFF_NOPE (오타)
+            if hour == 1:
+                off_key = "HR_1_GET_OFF_NOPE"
+
+            cursor.execute("""
+                INSERT INTO hourly_od_data (
+                    기준년월, 노선번호, 노선명,
+                    표준버스정류장ID, 버스정류장ARS번호, 역명,
+                    시간대, 승차인원, 하차인원
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+            """, (
+                row.get("USE_YM"),
+                row.get("RTE_NO"),
+                row.get("RTE_NM"),
+                row.get("STOPS_ID"),
+                row.get("STOPS_ARS_NO"),
+                row.get("SBWY_STNS_NM"),
+                hour,
+                int(row.get(on_key, 0) or 0),
+                int(row.get(off_key, 0) or 0)
+            ))
 
     conn.commit()
     cursor.close()
     conn.close()
-    print(f"[정보] DB 적재 완료: {len(rows)}건")
+    print(f"[정보] DB 적재 완료")
 
 
 # ============================================================
