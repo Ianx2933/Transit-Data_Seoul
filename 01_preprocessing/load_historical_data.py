@@ -17,7 +17,7 @@ DB_CONN = {
     "password": "330218"
 }
 
-START_DATE = datetime(2023, 1, 1)
+START_DATE = datetime(2025, 2, 1)
 END_DATE   = datetime.today()
 
 # ============================================================

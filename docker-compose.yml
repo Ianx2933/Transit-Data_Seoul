@@ -88,7 +88,7 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__WEBSERVER__SECRET_KEY: 'seoul_transit_secret'
     volumes:
-      - ./dags:/opt/airflow/dags
+      - ./01_preprocessing/dags:/opt/airflow/dags
     command: scheduler
 
 volumes:
