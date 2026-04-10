@@ -10,7 +10,7 @@ DAILY_API_KEY  = "4f514c576773746134316f7643526a"
 HOURLY_API_KEY = "47764c6d7273746134356745597371"
 
 DB_CONN = {
-    "host": "localhost",  # 로컬에서 직접 실행하므로 localhost
+    "host": "localhost",
     "port": 5432,
     "dbname": "Seoul_Transit",
     "user": "postgres",
@@ -21,7 +21,7 @@ START_DATE = datetime(2023, 1, 1)
 END_DATE   = datetime.today()
 
 # ============================================================
-# 일별 승하차 과거 데이터 적재
+# 일별 승하차 과거 데이터 적재 (페이징 처리)
 # ============================================================
 def load_daily_historical():
     conn = psycopg2.connect(**DB_CONN)
@@ -32,6 +32,7 @@ def load_daily_historical():
         target_date = current.strftime("%Y%m%d")
 
         try:
+            # 1페이지 먼저 호출해서 총 건수 확인
             url = f"http://openapi.seoul.go.kr:8088/4f514c576773746134316f7643526a/json/CardBusStatisticsServiceNew/1/1000/{target_date}"
             response = requests.get(url, timeout=30)
             data = response.json()
@@ -41,9 +42,29 @@ def load_daily_historical():
                 current += timedelta(days=1)
                 continue
 
-            rows = data["CardBusStatisticsServiceNew"]["row"]
+            total = data["CardBusStatisticsServiceNew"]["list_total_count"]
+            rows  = data["CardBusStatisticsServiceNew"]["row"]
+            print(f"[정보] {target_date} 총 {total}건")
 
-            for row in rows:
+            # 페이징: 1000건씩 나눠서 수집
+            page_size = 1000
+            start_idx = 1
+            all_rows = list(rows)
+
+            while start_idx + page_size <= total:
+                start_idx += page_size
+                end_idx = min(start_idx + page_size - 1, total)
+                page_url = f"http://openapi.seoul.go.kr:8088/4f514c576773746134316f7643526a/json/CardBusStatisticsServiceNew/{start_idx}/{end_idx}/{target_date}"
+                page_response = requests.get(page_url, timeout=30)
+                page_data = page_response.json()
+
+                if "CardBusStatisticsServiceNew" in page_data:
+                    all_rows.extend(page_data["CardBusStatisticsServiceNew"]["row"])
+
+                time.sleep(0.3)
+
+            # DB 적재
+            for row in all_rows:
                 cursor.execute("""
                     INSERT INTO daily_od_data (
                         기준일자, 노선번호, 노선명,
@@ -63,14 +84,14 @@ def load_daily_historical():
                 ))
 
             conn.commit()
-            print(f"[정보] 일별 적재 완료: {target_date} ({len(rows)}건)")
+            print(f"[정보] 일별 적재 완료: {target_date} ({len(all_rows)}건)")
 
         except Exception as e:
             print(f"[오류] {target_date} 실패: {e}")
             conn.rollback()
 
         current += timedelta(days=1)
-        time.sleep(0.5)  # API Rate limit 방지
+        time.sleep(0.5)
 
     cursor.close()
     conn.close()
@@ -78,7 +99,7 @@ def load_daily_historical():
 
 
 # ============================================================
-# 시간대별 승하차 과거 데이터 적재
+# 시간대별 승하차 과거 데이터 적재 (페이징 처리)
 # ============================================================
 def load_hourly_historical():
     conn = psycopg2.connect(**DB_CONN)
@@ -89,6 +110,7 @@ def load_hourly_historical():
         target_ym = current.strftime("%Y%m")
 
         try:
+            # 1페이지 먼저 호출해서 총 건수 확인
             url = f"http://openapi.seoul.go.kr:8088/47764c6d7273746134356745597371/json/CardBusTimeNew/1/1000/{target_ym}"
             response = requests.get(url, timeout=30)
             data = response.json()
@@ -96,9 +118,29 @@ def load_hourly_historical():
             if "CardBusTimeNew" not in data:
                 print(f"[경고] 데이터 없음: {target_ym}")
             else:
-                rows = data["CardBusTimeNew"]["row"]
+                total = data["CardBusTimeNew"]["list_total_count"]
+                rows  = data["CardBusTimeNew"]["row"]
+                print(f"[정보] {target_ym} 총 {total}건")
 
-                for row in rows:
+                # 페이징: 1000건씩 나눠서 수집
+                page_size = 1000
+                start_idx = 1
+                all_rows = list(rows)
+
+                while start_idx + page_size <= total:
+                    start_idx += page_size
+                    end_idx = min(start_idx + page_size - 1, total)
+                    page_url = f"http://openapi.seoul.go.kr:8088/47764c6d7273746134356745597371/json/CardBusTimeNew/{start_idx}/{end_idx}/{target_ym}"
+                    page_response = requests.get(page_url, timeout=30)
+                    page_data = page_response.json()
+
+                    if "CardBusTimeNew" in page_data:
+                        all_rows.extend(page_data["CardBusTimeNew"]["row"])
+
+                    time.sleep(0.3)
+
+                # DB 적재 (wide → long 변환)
+                for row in all_rows:
                     for hour in range(24):
                         on_key  = f"HR_{hour}_GET_ON_TNOPE"
                         off_key = f"HR_{hour}_GET_OFF_TNOPE"
@@ -127,7 +169,7 @@ def load_hourly_historical():
                         ))
 
                 conn.commit()
-                print(f"[정보] 시간대별 적재 완료: {target_ym} ({len(rows)}건)")
+                print(f"[정보] 시간대별 적재 완료: {target_ym} ({len(all_rows)}건)")
 
         except Exception as e:
             print(f"[오류] {target_ym} 실패: {e}")
@@ -139,7 +181,7 @@ def load_hourly_historical():
         else:
             current = current.replace(month=current.month + 1)
 
-        time.sleep(1)  # API Rate limit 방지
+        time.sleep(1)
 
     cursor.close()
     conn.close()
