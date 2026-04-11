@@ -1,14 +1,18 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+import os
 import requests
 import psycopg2
 import pendulum
 
+load_dotenv()
+
 # ============================================================
 # 설정
 # ============================================================
-API_KEY = "4f514c576773746134316f7643526a"
+API_KEY = os.environ.get("SEOUL_DAILY_API_KEY", "")
 DB_CONN = {
     "host": "seouldb",
     "port": 5432,
@@ -27,7 +31,7 @@ def collect_daily_od(**context):
     target_date = (context["execution_date"].in_timezone(KST) - timedelta(days=1)).strftime("%Y%m%d")
     print(f"[정보] 수집 대상 날짜: {target_date}")
 
-    url = f"http://openapi.seoul.go.kr:8088/4f514c576773746134316f7643526a/json/CardBusStatisticsServiceNew/1/1000/{target_date}"
+    url = f"http://openapi.seoul.go.kr:8088/{API_KEY}/json/CardBusStatisticsServiceNew/1/1000/{target_date}"
 
     response = requests.get(url, timeout=30)
     data = response.json()

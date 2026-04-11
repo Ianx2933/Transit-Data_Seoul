@@ -1,14 +1,18 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+import os
 import requests
 import psycopg2
 import pendulum
 
+load_dotenv()
+
 # ============================================================
 # 설정
 # ============================================================
-API_KEY = "47764c6d7273746134356745597371"
+API_KEY = os.environ.get("SEOUL_HOURLY_API_KEY", "")
 DB_CONN = {
     "host": "seouldb",
     "port": 5432,
@@ -32,7 +36,7 @@ def collect_hourly_od(**context):
     target_ym = last_month.strftime("%Y%m")
     print(f"[정보] 수집 대상 년월: {target_ym}")
 
-    url = f"http://openapi.seoul.go.kr:8088/47764c6d7273746134356745597371/json/CardBusTimeNew/1/1000/{target_ym}"
+    url = f"http://openapi.seoul.go.kr:8088/{API_KEY}/json/CardBusTimeNew/1/1000/{target_ym}"
 
     response = requests.get(url, timeout=30)
     data = response.json()
