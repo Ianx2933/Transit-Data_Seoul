@@ -110,8 +110,8 @@ public class CongestionService {
             "FROM 재차량계산 r " +
             "LEFT JOIN (" +
             "    SELECT " +
-            "        SUBSTRING(정류장번호, 2, 5) AS ARS코드, " +
-            "        SUBSTRING(정류장명, 2, LENGTH(정류장명)) AS 정류장명, " +
+            "        정류장번호 AS ARS코드, " +  
+            "        정류장명, " +
             "        위도, " +
             "        경도 " +
             "    FROM bus_stop_location " +
