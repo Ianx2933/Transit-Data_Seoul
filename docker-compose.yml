@@ -34,6 +34,22 @@ services:
       - postgres
       - redis
 
+  prediction:
+    build: ./05_prediction
+    container_name: seoulprediction
+    ports:
+      - "5000:5000"
+    environment:
+      DB_HOST: seouldb
+      DB_PORT: 5432
+      DB_NAME: Seoul_Transit
+      DB_USER: postgres
+      DB_PASSWORD: 330218
+    volumes:
+      - ./04_analysis:/app/../04_analysis
+    depends_on:
+      - postgres
+
   airflow-db:
     image: postgres:15
     container_name: airflowdb
@@ -72,7 +88,7 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__WEBSERVER__SECRET_KEY: 'seoul_transit_secret'
     volumes:
-      - ./dags:/opt/airflow/dags
+      - ./01_preprocessing/dags:/opt/airflow/dags
     command: webserver
 
   airflow-scheduler:
